@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 from os import getenv
 from datetime import datetime, timedelta
-import pymssql  
+import pymssql
+import re
 '''
     Investigate a Batch Settlement that has not proccessed correctly.
     A list will be returned with the first element as the Batch number.
@@ -23,78 +24,80 @@ def add_x_minutes(tran_timestamp, time_minutes = 3):
 now = datetime.now()
 new_file = now.strftime('%Y%m%d-%H%M%S') + '-Settle_Investigate.txt'
 
-
-server = '127.0.0.1' # local server used for testing
-conn = pymssql.connect(server)
-cursor = conn.cursor()
-
-batches_invalid = []
-trans_invalid = []
-
 # query outstanding batches except for today's
 get_batch_invalid = '''
-    SELECT ID,BatchNumber,BatchDate,BatchSettledDateTime,
-    SettlementSubmitted,SettlementResponse 
+    DECLARE @CurrentDay as date
+    SET @CurrentDay = CONVERT(date, GETDATE())
+    SELECT ID,BatchNumber,BatchDate,BatchSettledDateTime,SettlementSubmitted,SettlementResponse 
     FROM KCXPPN.dbo.SettlementBatch 
-    WHERE (BatchSettledDateTime IS NULL)
-    AND (BatchDate <> CONVERT(date, GETDATE())) '''
-
+    WHERE (BatchSettledDateTime IS NULL) and (BatchDate <> @CurrentDay)
+    ORDER BY BatchDate '''
 # query transactions in selected batch
-get_trans_invalid = '''
+get_tran_invalid = '''
     SELECT ID, SalesDate, CardType, PANLastFour, Token, ProviderID
     FROM KCXPPN.dbo.PaymentTransaction
-    WHERE SettlementBatchID = 'x' AND HostResponse = 'APPROVED' 
+    WHERE SettlementBatchID = '{0}' AND HostResponse = 'APPROVED' 
     AND (TransactionCode IN ('11', '13', '16', '21')) 
     ORDER BY ProviderID '''
-
 # query MessagingEvent table for token only response
 get_token_valid = '''
-    SELECT [Message],[LoggedDateTime]
+    SELECT Message, LoggedDateTime
     FROM KCXPPN.dbo.MessagingEvent
-    WHERE LoggedDateTime BETWEEN '{}' AND '{}'
+    WHERE LoggedDateTime BETWEEN '{0}' AND '{1}'
     ORDER BY LoggedDateTime '''
 
-with pymssql.connect(server) as conn:
-    
-    with conn.cursor(as_dict = True) as cursor:
-        
-        cursor.execute(get_batch_invalid)
-        for row in cursor:
-            
-            batches_invalid.append((row['ID'], row['BatchNumber']))
-            if row[5] = 5: # Batch is invalid and must investigate
-                ''' Get transactions from invalid Batch '''
-                cursor.execute(get_trans_invalid.format(row[0]))
-                for row in cursor:
-                                                
-                    if row[3] == 'PLC':
-                        pass
-                        # transaction must be moved to a PLC only batch
+server = '127.0.0.1'
+conn = pymssql.connect(server)
+cursor = conn.cursor(as_dict = True)
+cursor.execute(get_batch_invalid)
+batch_item = cursor.fetchone()
+batch_invalid = []
+
+''' Create list of batches (each a dict) '''
+while batch_item:
+    batch_item['Transactions'] = []
+    batch_invalid.append(batch_item)
+    batch_item = cursor.fetchone()
+
+''' Create list of transactions inside batch (each a dict) '''
+for item in batch_invalid: 
+    cursor.execute(get_tran_invalid.format\
+    (batch_invalid[0]['ID'])
+    tran_item = cursor.fetchone()
+    while tran_item:
+        batch_invalid[item]['Transactions'].append(tran_item)
+        tran_item = cursor.fetchone()
+
+    for subitem in batch_invalid[item]['Transactions']:
+        sql_ts = batch_invalid[item]['Transactions'][subitem]['SalesDate']
+        cursor.execute(get_token_valid.format\
+        (sql_ts, add_x_minutes(sql_ts)))
+        token_item = cursor.fetchone()
+        while token_item:
+            if re.match('Token only payload', token_item['Message'])
+                batch_invalid[item]['Transactions'][subitem]['Token']
+                = re.search('\d{13,20}' +
+                batch_invalid[item]['Transactions'][subitem]['PANLastFour']
+                           
+# Trying to get '1186601810474155' out of token response:
+''' Event : Token only payload: 0|1CAPPROVAL|20|20|20|20|20|20|20|20|1C
+1107|1C|1C|1C|1C|1C|1C|1C|1C|1BA0SP021070161186601810474155|1B '''
+# Where 4155 is the 'last four' of the card number
+# and the '16' in 7016 refers to the length of the token
+''' Use 'last four' and search about 6 numbers to the left,
+look for '70' and then get the length of the token next to it
+use recursive function to compare length to token guess so far '''
                             
-                    elif row[9] == None:
-                            
-                            # get ID, SalesDate, CardType, PANLastFour, Token, ProviderID
-                            trans_invalid.append([row])
-                            
-                    for item in trans_invalid:      # search for missing tokens
-                        
-                        cursor.execute(get_token_valid.format(''' insert time frame here ''')
-                        for row in cursor:
-                                       
-                            if 'token-only-response' in row:
-                                pass
-                                # parse string with RegEx to get token
-                                
-# Not done yet
-                 
-# Write data to file
-with open(new_file, 'a+') as f:
-    for item in batches_invalid:
-        f.write('ID = %d, BatchNumber = %s \n' % (row['ID'], row['BatchNumber']))
-        for sub_item in item:
-            f.write('ID = %d,OriginalTranID = %s,SalesDate = %s,CardType = %s,\
-            PANLastFour = %d,Token = %d,ProviderID = %d,LocalDateTime = %s,\
-            HostResponse = %s \n' % (row['ID'], row['OriginalTranID'],
-            row['SalesDate'], row['CardType'], row['PANLastFour'], row['Token'],
-            row['ProviderID'], row['LocalDateTime'], row['HostResponse']))
-            
+                           
+
+                   
+'''
+cursor.execute('SELECT * FROM persons WHERE salesrep=%s', 'John Doe')
+row = cursor.fetchone()
+while row:
+    print("ID=%d, Name=%s" % (row[0], row[1]))
+    row = cursor.fetchone()
+
+conn.close()
+'''
+print(batch_invalid)
