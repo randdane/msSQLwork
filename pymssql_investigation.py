@@ -76,7 +76,7 @@ for item in batch_invalid:
         while token_item:
             if re.match('Token only payload', token_item['Message'])
                 batch_invalid[item]['Transactions'][subitem]['Token']
-                = re.search('\d{13,20}' +
+                = re.search(r'70\d{13,25}' +
                 batch_invalid[item]['Transactions'][subitem]['PANLastFour']
                            
 # Trying to get '1186601810474155' out of token response:
