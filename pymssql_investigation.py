@@ -11,15 +11,12 @@ import re
     Each tuple will consist of the TransactionID, token, card type,
     and ProviderID.
 '''
-def add_x_minutes(tran_timestamp, time_minutes = 3):
+def add_x_minutes(tran_ts, time_minutes = 3):
     '''
-        Convert SQL timestamp to Python datetime, add about 3 minutes
-        to it, and return it back as a SQL timestamp.
+        Add three minutes to timestamp.
     '''
-    datetime_ts = datetime.strptime(tran_timestamp[:-4],
-                  '%Y-%m-%d %H:%M:%S') # milliseconds are not needed
-    incremented_ts = datetime_ts + timedelta(minutes = time_minutes)
-    return incremented_ts.strftime('%Y-%m-%d %H:%M:%S')
+    return tran_ts + timedelta(minutes = time_minutes)
+     
     
 # Data used for investigation will be recorded in a new file
 now = datetime.now()
@@ -53,6 +50,7 @@ get_token_valid = '''
 update_token_valid = '''
     UPDATE KCXPPN.dbo.PaymentTransaction SET Token = '{Token}' WHERE ID = '{ID}'
     UPDATE KCXPPN.dbo.PaymentTransaction SET ProviderID = '{ProviderID}' WHERE ID = '{ID}' '''
+
 # dictionary of Card Types matched to their ProviderID
 card_to_ID = {'MC' : '001', 'VISA' : '002', 'AMEX' : '006', 'DISC' : '003'}
 
@@ -60,7 +58,7 @@ card_to_ID = {'MC' : '001', 'VISA' : '002', 'AMEX' : '006', 'DISC' : '003'}
 update_batch = '''
     Update KCXPPN.dbo.SettlementBatch 
     SET BatchSettledDateTime = NULL, SettlementSubmitted = '0', SettlementResponse = NULL
-    WHERE ID = '{ID}' '''
+    WHERE ID = '{0}' '''
 
 server = '127.0.0.1'
 conn = pymssql.connect(server)
@@ -74,51 +72,48 @@ while batch_item:
     batch_item['Transactions'] = []
     batch_invalid.append(batch_item)
     batch_item = cursor.fetchone()
-
+    
 ''' Create list of transactions inside batch (each a dict) '''
 for item in batch_invalid: 
-    cursor.execute(get_tran_invalid.format\
-    (batch_invalid[item]['ID'])
+    cursor.execute(get_tran_invalid.format(item['ID']))
     tran_item = cursor.fetchone()
     while tran_item:
-        batch_invalid[item]['Transactions'].append(tran_item)
+        item['Transactions'].append(tran_item)
         tran_item = cursor.fetchone()
-        
+
 for item in batch_invalid: 
-    for subitem in batch_invalid[item]['Transactions']:
-        sql_ts = batch_invalid[item]['Transactions'][subitem]['SalesDate']
+    for subitem in item['Transactions']:
+        sql_ts = subitem['SalesDate']
         cursor.execute(get_token_valid.format\
-        (sql_ts, add_x_minutes(sql_ts)))
+        (str(sql_ts)[:-7], str(add_x_minutes(sql_ts))[:-7]))
+       
         token_item = cursor.fetchone()
         while token_item:
-            if 'Event : Token only payload:' in token_item['Message'])
-            # Get token (eg. '1186601810474155') out of token response:
-            ''' Event : Token only payload: 0|1CAPPROVAL|20|20|20|20|20|20|20|20|1C
-            1107|1C|1C|1C|1C|1C|1C|1C|1C|1BA0SP021070161186601810474155|1B '''
-            # Where 4155 is the 'last four' of the card number
-            # and the '016' in '07016' refers to the length of the token
+            if 'Event : Token only payload:' in token_item['Message']:
                 tag07data = token_item['Message'].split('|')
-                batch_invalid[item]['Transactions'][subitem]['Token']
-                = re.search(r'(07){1}([0-9]*)', tag07data).group(2)
-            
+                subitem['Token'] = re.search(r'(07){1}([0-9]*)', tag07data).group(2)
+# Get token (eg. '1186601810474155') out of token response:
+# Event : Token only payload: 0|1CAPPROVAL|20|20|20|20|20|20|20|20|1C
+# 1107|1C|1C|1C|1C|1C|1C|1C|1C|1BA0SP021070161186601810474155|1B
+# Where 4155 is the 'last four' of the card number
+# and the '016' in '07016' refers to the length of the token
             token_item = cursor.fetchone()
         
-        batch_invalid[item]['Transactions'][subitem]['PANLastFour'] = 
-        card_to_ID[batch_invalid[item]['Transactions'][subitem]['CardType']]
+        subitem['PANLastFour'] = card_to_ID[subitem['CardType']]
 
 # insert token and ProviderID into Transaction and update record
 for item in batch_invalid: 
-    for subitem in batch_invalid[item]['Transactions']:
-        cursor.execute(update_token_valid.format(**subitem)
+    for subitem in item['Transactions']:
+        pass # cursor.execute(update_token_valid.format(**subitem))
 
 # reset each batch for auto settlement
 if batch_invalid:
     for item in batch_invalid:
-        cursor.execute(update_batch.format(item['ID'])
+        cursor.execute(update_batch.format(item['ID']))
 
 conn.close()
-
+'''
 # Write data to file
-with open(new_file, 'a+') as f:
-    f.write(pprint(batch_invalid))
-
+with open(new_file, 'w') as f:
+    f.write(str(batch_invalid))
+'''
