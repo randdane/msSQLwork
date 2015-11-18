@@ -1,16 +1,19 @@
 # -*- coding: utf-8 -*-
-from os import getenv
-from datetime import datetime, timedelta
-from pprint import pprint
-import pymssql
-import re
 '''
     Investigate a Batch Settlement that has not proccessed correctly.
     A list of dictionaries containing all pertanent Batch info will
     be created. A 'Transactions' item will be added and its value will
     be a list of invalid transactions that fall under that Batch.
     Each transaction will be a dictionary will all required info.
+
+    For use with Microsoft Server 2008 and higher.
 '''
+from os import getenv
+from datetime import datetime, timedelta
+from pprint import pprint
+import pymssql
+import re
+
 def add_x_minutes(tran_ts, time_minutes = 3):
     '''
         Add three minutes to timestamp for search purposes.
