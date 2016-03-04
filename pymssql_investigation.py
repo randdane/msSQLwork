@@ -6,49 +6,46 @@
     be a list of invalid transactions that fall under that Batch.
     Each transaction will be a dictionary will all required info.
 
-    For use with Microsoft Server 2008 and higher.
+    * Only tested on Microsoft Server 2012.
 '''
 from os import getenv
-from datetime import datetime, timedelta
+from time import datetime
 from pprint import pprint
 import pymssql
 import re
 
-def add_x_minutes(tran_ts, time_minutes = 3):
-    '''
-        Add three minutes to timestamp for search purposes.
-    '''
-    return tran_ts + timedelta(minutes = time_minutes)
 
 # query outstanding batches except for today's
 get_batch_invalid = '''
-    DECLARE @CurrentDay as date
-    SET @CurrentDay = CONVERT(date, GETDATE())
-    SELECT ID,BatchNumber,BatchDate,BatchSettledDateTime,SettlementSubmitted,SettlementResponse 
+    SELECT [ID], [BatchNumber], [BatchDate], [BatchSettledDateTime],
+    [SettlementSubmitted], [SettlementResponse]
     FROM KCXPPN.dbo.SettlementBatch 
-    WHERE (BatchSettledDateTime IS NULL) and (BatchDate <> @CurrentDay)
+    WHERE (BatchSettledDateTime IS NULL) AND (BatchDate <> CONVERT(date, GETDATE()))
     ORDER BY BatchDate '''
     
 # query transactions in selected batch
 get_tran_invalid = '''
-    SELECT ID, SalesDate, CardType, PANLastFour, Token, ProviderID
+    DECLARE @SettleID varchar(128)
+    SET @SettleID = '{0}'
+    SELECT [ID],[SalesDate],[CardType],[PANLastFour],[Token],[ProviderID]
     FROM KCXPPN.dbo.PaymentTransaction
-    WHERE SettlementBatchID = '{0}' AND HostResponse = 'APPROVED' 
+    WHERE SettlementBatchID = @SettleID AND HostResponse = 'APPROVED' 
     AND (TransactionCode IN ('11', '13', '16', '21')) 
     ORDER BY ProviderID '''
     
 # query MessagingEvent table for token only response
 get_token_valid = '''
-    SELECT Message, LoggedDateTime
+    DECLARE @TranDate datetime
+    SET @TranDate = '{0}'
+    SELECT [Message],[LoggedDateTime]
     FROM KCXPPN.dbo.MessagingEvent
-    WHERE (LoggedDateTime BETWEEN '{0}' AND '{1}')
-    AND (Message LIKE 'Event : Token only payload:%')
+    WHERE LoggedDateTime BETWEEN @TranDate AND DATEADD(minute,5,@TranDate)
     ORDER BY LoggedDateTime '''
     
 # update token with recovered value
 update_token_valid = '''
-    UPDATE KCXPPN.dbo.PaymentTransaction SET Token = '{Token}' WHERE ID = '{ID}'
-    UPDATE KCXPPN.dbo.PaymentTransaction SET ProviderID = '{ProviderID}' WHERE ID = '{ID}' '''
+    UPDATE KCXPPN.dbo.PaymentTransaction SET Token = '{Token}', ProviderID = '{ProviderID}'
+    WHERE ID = '{ID}' '''
 
 # dictionary of Card Types matched to their ProviderID
 card_to_ID = {'MC' : '001', 'VISA' : '002', 'AMEX' : '006', 'DISC' : '003'}
@@ -83,8 +80,7 @@ for item in batch_invalid:
 for item in batch_invalid: 
     for subitem in item['Transactions']:
         sql_ts = subitem['SalesDate']
-        cursor.execute(get_token_valid.format\
-        (str(sql_ts)[:-7], str(add_x_minutes(sql_ts))[:-7]))
+        cursor.execute(get_token_valid.format(str(sql_ts)[:-7])
         token_item = cursor.fetchone()
         while token_item:
             if 'Event : Token only payload:' in token_item['Message']:
@@ -93,7 +89,7 @@ for item in batch_invalid:
 
             token_item = cursor.fetchone()
         
-        subitem['PANLastFour'] = card_to_ID[subitem['CardType']]
+        subitem['ProviderID'] = card_to_ID[subitem['CardType']]
 
 # insert token and ProviderID into Transaction and update record
 for item in batch_invalid: 
